@@ -113,6 +113,9 @@ cPlayer::cPlayer(cClientHandlePtr a_Client, const AString & a_PlayerName) :
 		// This is a new player. Set the player spawn point to the spawn point of the default world
 		SetBedPos(Vector3i(static_cast<int>(World->GetSpawnX()), static_cast<int>(World->GetSpawnY()), static_cast<int>(World->GetSpawnZ())), World);
 
+		SetWorld(World);  // Use default world
+		SetCapabilities();
+
 		LOGD("Player \"%s\" is connecting for the first time, spawning at default world spawn {%.2f, %.2f, %.2f}",
 			a_PlayerName.c_str(), GetPosX(), GetPosY(), GetPosZ()
 		);
@@ -1220,8 +1223,7 @@ Vector3d cPlayer::GetEyePosition(void) const
 
 bool cPlayer::IsGameModeCreative(void) const
 {
-	return (m_GameMode == gmCreative) ||  // Either the player is explicitly in Creative
-		((m_GameMode == gmNotSet) &&  m_World->IsGameModeCreative());  // or they inherit from the world and the world is Creative
+	return (GetEffectiveGameMode() == gmCreative);
 }
 
 
@@ -1230,8 +1232,7 @@ bool cPlayer::IsGameModeCreative(void) const
 
 bool cPlayer::IsGameModeSurvival(void) const
 {
-	return (m_GameMode == gmSurvival) ||  // Either the player is explicitly in Survival
-		((m_GameMode == gmNotSet) &&  m_World->IsGameModeSurvival());  // or they inherit from the world and the world is Survival
+	return (GetEffectiveGameMode() == gmSurvival);
 }
 
 
@@ -1240,8 +1241,7 @@ bool cPlayer::IsGameModeSurvival(void) const
 
 bool cPlayer::IsGameModeAdventure(void) const
 {
-	return (m_GameMode == gmAdventure) ||  // Either the player is explicitly in Adventure
-		((m_GameMode == gmNotSet) &&  m_World->IsGameModeAdventure());  // or they inherit from the world and the world is Adventure
+	return (GetEffectiveGameMode() == gmAdventure);
 }
 
 
@@ -1249,8 +1249,7 @@ bool cPlayer::IsGameModeAdventure(void) const
 
 bool cPlayer::IsGameModeSpectator(void) const
 {
-	return (m_GameMode == gmSpectator) ||  // Either the player is explicitly in Spectator
-		((m_GameMode == gmNotSet) &&  m_World->IsGameModeSpectator());  // or they inherit from the world and the world is Spectator
+	return (GetEffectiveGameMode() == gmSpectator);
 }
 
 
@@ -1518,40 +1517,38 @@ void cPlayer::SetGameMode(eGameMode a_GameMode)
 
 
 
-void cPlayer::LoginSetGameMode( eGameMode a_GameMode)
-{
-	m_GameMode = a_GameMode;
-
-	SetCapabilities();
-}
-
-
-
-
-
 void cPlayer::SetCapabilities()
 {
-	if (!IsGameModeCreative() || IsGameModeSpectator())
+	// Fly ability
+	if (IsGameModeCreative() || IsGameModeSpectator())
+	{
+		SetCanFly(true);
+	}
+	else
 	{
 		SetFlying(false);
 		SetCanFly(false);
 	}
 
+	// Visible
 	if (IsGameModeSpectator())
 	{
 		SetVisible(false);
-		SetCanFly(true);
+	}
+	else
+	{
+		SetVisible(true);
+	}
 
+	// Set for spectator
+	if (IsGameModeSpectator())
+	{
 		// Clear the current dragging item of the player
 		if (GetWindow() != nullptr)
 		{
 			m_DraggingItem.Empty();
 			GetClientHandle()->SendInventorySlot(-1, -1, m_DraggingItem);
 		}
-	}
-	else
-	{
-		SetVisible(true);
 	}
 }
 
@@ -2011,6 +2008,12 @@ bool cPlayer::DoMoveToWorld(cWorld * a_World, bool a_ShouldSendRespawn, Vector3d
 		// Stop all mobs from targeting this player
 		StopEveryoneFromTargetingMe();
 
+		// Deal with new world
+		SetWorld(a_World);
+
+		// Set capabilities based on new world
+		SetCapabilities();
+
 		cClientHandle * ch = this->GetClientHandle();
 		if (ch != nullptr)
 		{
@@ -2019,7 +2022,6 @@ bool cPlayer::DoMoveToWorld(cWorld * a_World, bool a_ShouldSendRespawn, Vector3d
 			{
 				m_ClientHandle->SendRespawn(a_World->GetDimension());
 			}
-
 
 			// Update the view distance.
 			ch->SetViewDistance(m_ClientHandle->GetRequestedViewDistance());
@@ -2036,7 +2038,7 @@ bool cPlayer::DoMoveToWorld(cWorld * a_World, bool a_ShouldSendRespawn, Vector3d
 
 		// Queue add to new world and removal from the old one
 
-		SetWorld(a_World);  // Chunks may be streamed before cWorld::AddPlayer() sets the world to the new value
+		// Chunks may be streamed before cWorld::AddPlayer() sets the world to the new value
 		cChunk * ParentChunk = this->GetParentChunk();
 
 		LOGD("Warping player \"%s\" from world \"%s\" to \"%s\". Source chunk: (%d, %d) ",
